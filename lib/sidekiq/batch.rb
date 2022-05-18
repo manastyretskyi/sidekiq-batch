@@ -4,6 +4,7 @@ require 'sidekiq'
 require 'sidekiq/batch/callback'
 require 'sidekiq/batch/middleware'
 require 'sidekiq/batch/status'
+require 'sidekiq/batch/set'
 require 'sidekiq/batch/version'
 
 module Sidekiq
@@ -18,9 +19,17 @@ module Sidekiq
       @bid = existing_bid || SecureRandom.urlsafe_base64(10)
       @existing = !(!existing_bid || existing_bid.empty?)  # Basically existing_bid.present?
       @initialized = false
-      @created_at = Time.now.utc.to_f
       @bidkey = "BID-" + @bid.to_s
       @ready_to_queue = []
+
+      if @existing
+        data = Sidekiq.redis { |r| r.hgetall(@bidkey) }
+        @created_at = data["created_at"].to_f
+        @description = data["description"]
+        @callback_queue = data["callback_queue"]
+      else
+        @created_at = Time.now.utc.to_f
+      end
     end
 
     def description=(description)
@@ -53,57 +62,61 @@ module Sidekiq
     end
 
     def jobs
-      raise NoBlockGivenError unless block_given?
+      if block_given?
+        bid_data, Thread.current[:bid_data] = Thread.current[:bid_data], []
 
-      bid_data, Thread.current[:bid_data] = Thread.current[:bid_data], []
+        begin
+          if !@existing && !@initialized
+            parent_bid = Thread.current[:batch].bid if Thread.current[:batch]
 
-      begin
-        if !@existing && !@initialized
-          parent_bid = Thread.current[:batch].bid if Thread.current[:batch]
+            Sidekiq.redis do |r|
+              r.multi do |pipeline|
+                pipeline.hset(@bidkey, "created_at", @created_at)
+                pipeline.hset(@bidkey, "parent_bid", parent_bid.to_s) if parent_bid
+                pipeline.expire(@bidkey, BID_EXPIRE_TTL)
+              end
+            end
+
+            @initialized = true
+          end
+
+          @ready_to_queue = []
+
+          begin
+            parent = Thread.current[:batch]
+            Thread.current[:batch] = self
+            yield
+          ensure
+            Thread.current[:batch] = parent
+          end
+
+          return [] if @ready_to_queue.size == 0
 
           Sidekiq.redis do |r|
             r.multi do |pipeline|
-              pipeline.hset(@bidkey, "created_at", @created_at)
-              pipeline.hset(@bidkey, "parent_bid", parent_bid.to_s) if parent_bid
+              if parent_bid
+                pipeline.hincrby("BID-#{parent_bid}", "children", 1)
+                pipeline.hincrby("BID-#{parent_bid}", "total", @ready_to_queue.size)
+                pipeline.expire("BID-#{parent_bid}", BID_EXPIRE_TTL)
+              end
+
+              pipeline.hincrby(@bidkey, "pending", @ready_to_queue.size)
+              pipeline.hincrby(@bidkey, "total", @ready_to_queue.size)
               pipeline.expire(@bidkey, BID_EXPIRE_TTL)
+
+              pipeline.sadd(@bidkey + "-jids", @ready_to_queue)
+              pipeline.expire(@bidkey + "-jids", BID_EXPIRE_TTL)
             end
           end
 
-          @initialized = true
-        end
-
-        @ready_to_queue = []
-
-        begin
-          parent = Thread.current[:batch]
-          Thread.current[:batch] = self
-          yield
+          @ready_to_queue
         ensure
-          Thread.current[:batch] = parent
+          Thread.current[:bid_data] = bid_data
         end
-
-        return [] if @ready_to_queue.size == 0
-
+      else
         Sidekiq.redis do |r|
-          r.multi do |pipeline|
-            if parent_bid
-              pipeline.hincrby("BID-#{parent_bid}", "children", 1)
-              pipeline.hincrby("BID-#{parent_bid}", "total", @ready_to_queue.size)
-              pipeline.expire("BID-#{parent_bid}", BID_EXPIRE_TTL)
-            end
-
-            pipeline.hincrby(@bidkey, "pending", @ready_to_queue.size)
-            pipeline.hincrby(@bidkey, "total", @ready_to_queue.size)
-            pipeline.expire(@bidkey, BID_EXPIRE_TTL)
-
-            pipeline.sadd(@bidkey + "-jids", @ready_to_queue)
-            pipeline.expire(@bidkey + "-jids", BID_EXPIRE_TTL)
-          end
+          r.smembers(@bidkey + "-jids")
         end
-
-        @ready_to_queue
-      ensure
-        Thread.current[:bid_data] = bid_data
       end
     end
 

@@ -1,0 +1,46 @@
+<header class="row">
+  <div class="col-sm-6">
+    <h3><%= t('Batches') %></h3>
+  </div>
+  <% if @batches.size > 0 && @total_size > @count %>
+    <div class="col-sm-6">
+      <%= erb :_paging, locals: { url: "#{root_path}batches" } %>
+    </div>
+  <% end %>
+</header>
+
+<div class="table_container">
+  <% if @batches.any? %>
+    <table class="queues table table-hover table-bordered table-striped">
+      <thead>
+        <th><%= t('bid') %></th>
+        <th><%= t('description') %></th>
+        <th><%= t('created_at') %></th>
+        <th><%= t('is_completed') %></th>
+        <th><%= t('jobs') %></th>
+      </thead>
+      <% @batches.each do |batch| %>
+        <% status = Batch::Status.new(batch.bid) %>
+        <tr>
+          <td>
+            <a href="<%= root_path %>batches/<%= batch.bid %>"><%= h batch.bid %></a>
+          </td>
+          <td>
+            <%= batch.description %>
+          </td>
+          <td>
+            <%= Time.at batch.created_at %>
+          </td>
+          <td>
+            <%= status.complete? %>
+          </td>
+          <td>
+            <%= batch.jobs.count %>
+          </td>
+        </tr>
+      <% end %>
+    </table>
+  <% else %>
+    <div class="alert alert-success"><%= t('shards_not_configured') %></div>
+  <% end %>
+</div>

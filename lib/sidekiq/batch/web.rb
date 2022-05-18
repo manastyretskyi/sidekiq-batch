@@ -19,7 +19,7 @@ module Sidekiq
           @count = (params["count"] || 25).to_i
           @current_page = params["page"].to_i == 0 ? 1 : params["page"].to_i
           range = ((@current_page - 1) * @count)..((@current_page -1) * @count) + @count
-          @batches = @batches[range].map(&Batch.method(:new))
+          @batches = @batches[range].to_a.map(&Batch.method(:new))
 
           erb Helpers.unique_template(:batches)
         end

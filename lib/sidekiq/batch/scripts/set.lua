@@ -1,4 +1,4 @@
-local keys = redis.call("SCAN", 0, "MATCH", "BID-*", "COUNT", 10000)[2]
+local keys = redis.call("SCAN", 0, "MATCH", "BID-*", "COUNT", 100000)[2]
 local batches = {}
 
 for key, value in pairs(keys) do

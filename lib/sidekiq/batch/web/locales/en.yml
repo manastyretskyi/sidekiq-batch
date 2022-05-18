@@ -3,3 +3,4 @@ en:
   bid: "BID"
   jobs: "Jobs"
   created_at: "Created at"
+  no_batches: "No batches"

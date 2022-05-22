@@ -1,0 +1,39 @@
+<header class="row">
+  <% if !!@batch.description %>
+    <div class="span col-sm-5 pull-left">
+      <h3>
+        <%= "#{t('Batch')}" %>
+        <small><%= @batch.description %></small>
+      </h3>
+    </div>
+  <% end %>
+</header>
+
+<table class="table table-bordered table-striped">
+  <tbody>
+  <tr>
+    <th><%= t 'total' %></th>
+    <td><%= @status.total %></td>
+  </tr>
+  <tr>
+    <th><%= t 'pending' %></th>
+    <td><%= @status.pending %></td>
+  </tr>
+  <tr>
+    <th><%= t 'failures' %></th>
+    <td><%= @status.failures %></td>
+  </tr>
+  <tr>
+    <th><%= t 'created_at' %></th>
+    <td><%= relative_time Time.at(@batch.created_at) %></td>
+  </tr>
+  <tr>
+    <th><%= t 'parent_batch' %></th>
+    <td><%= @status.parent_bid %></td>
+  </tr>
+  <tr>
+    <th><%= t 'failure_info' %></th>
+    <td><pre><%= @status.failure_info %></pre></td>
+  </tr>
+  </tbody>
+</table>

@@ -5,6 +5,7 @@ require 'sidekiq/batch/callback'
 require 'sidekiq/batch/middleware'
 require 'sidekiq/batch/status'
 require 'sidekiq/batch/set'
+require 'sidekiq/batch/jobs'
 require 'sidekiq/batch/version'
 
 module Sidekiq
@@ -94,29 +95,26 @@ module Sidekiq
 
           Sidekiq.redis do |r|
             r.multi do |pipeline|
-              if parent_bid
-                pipeline.hincrby("BID-#{parent_bid}", "children", 1)
-                pipeline.hincrby("BID-#{parent_bid}", "total", @ready_to_queue.size)
-                pipeline.expire("BID-#{parent_bid}", BID_EXPIRE_TTL)
-              end
-
-              pipeline.hincrby(@bidkey, "pending", @ready_to_queue.size)
-              pipeline.hincrby(@bidkey, "total", @ready_to_queue.size)
               pipeline.expire(@bidkey, BID_EXPIRE_TTL)
-
-              pipeline.sadd(@bidkey + "-jids", @ready_to_queue)
-              pipeline.expire(@bidkey + "-jids", BID_EXPIRE_TTL)
             end
           end
 
-          @ready_to_queue
+          if parent_bid
+            parent = self.class.new(parent_bid)
+            parent.children << @bid
+          end
+
+          jobs = Jobs.new(@bid)
+          @ready_to_queue.each do |jid|
+            jobs << jid
+          end
+
+          jobs
         ensure
           Thread.current[:bid_data] = bid_data
         end
       else
-        Sidekiq.redis do |r|
-          r.smembers(@bidkey + "-jids")
-        end
+        Jobs.new(@bid)
       end
     end
 
@@ -137,14 +135,35 @@ module Sidekiq
     end
 
     def parent
-      if parent_bid
-        Sidekiq::Batch.new(parent_bid)
-      end
+      Sidekiq::Batch.new(parent_bid) if parent_bid
     end
 
-    def valid?(batch = self)
-      valid = Sidekiq.redis { |r| r.exists("invalidated-bid-#{batch.bid}") } == 0
-      batch.parent ? valid && valid?(batch.parent) : valid
+    def valid?
+      valid = Sidekiq.redis { |r| r.exists("invalidated-bid-#{bid}") } == 0
+
+      parent.nil? ? valid : valid && parent.valid?
+    end
+
+    def cleanup!
+      self.class.cleanup_redis(@bid)
+      jobs.cleanup!
+      children.each(&:cleanup!)
+    end
+
+    def children
+      Children.new(@bid)
+    end
+
+    def completed?
+      jobs.pending.count.to_i.zero? && children.all?(&:completed?)
+    end
+
+    def failed?
+      !jobs.failed.count.to_i.zero?
+    end
+
+    def successfull?
+      jobs.count.to_i.zero? && children.all?(&:successfull?)
     end
 
     private
@@ -158,60 +177,43 @@ module Sidekiq
       end
     end
 
+    class Children
+      include Enumerable
+
+      def initialize(bid)
+        @bid = bid
+      end
+
+      def each(&block)
+        Sidekiq.redis do |r|
+          r.smembers("BID:CHILDREN-#{@bid}")
+        end.map(&Batch.method(:new)).each(&block)
+      end
+
+      def <<(bid)
+        Sidekiq.redis do |r|
+          r.sadd("BID:CHILDREN-#{@bid}", bid)
+        end
+      end
+    end
+
     class << self
       def process_failed_job(bid, jid)
-        _, pending, failed, children, complete, parent_bid = Sidekiq.redis do |r|
-          r.multi do |pipeline|
-            pipeline.sadd("BID-#{bid}-failed", jid)
+        batch = Batch.new bid
+        batch.jobs.fail!(jid)
 
-            pipeline.hincrby("BID-#{bid}", "pending", 0)
-            pipeline.scard("BID-#{bid}-failed")
-            pipeline.hincrby("BID-#{bid}", "children", 0)
-            pipeline.scard("BID-#{bid}-complete")
-            pipeline.hget("BID-#{bid}", "parent_bid")
-
-            pipeline.expire("BID-#{bid}-failed", BID_EXPIRE_TTL)
-          end
-        end
-
-        # if the batch failed, and has a parent, update the parent to show one pending and failed job
-        if parent_bid
-          Sidekiq.redis do |r|
-            r.multi do |pipeline|
-              pipeline.hincrby("BID-#{parent_bid}", "pending", 1)
-              pipeline.sadd("BID-#{parent_bid}-failed", jid)
-              pipeline.expire("BID-#{parent_bid}-failed", BID_EXPIRE_TTL)
-            end
-          end
-        end
-
-        if pending.to_i == failed.to_i && children == complete
-          enqueue_callbacks(:complete, bid)
-        end
+        enqueue_callbacks(:complete, bid) if completed?
       end
 
       def process_successful_job(bid, jid)
-        failed, pending, children, complete, success, total, parent_bid = Sidekiq.redis do |r|
-          r.multi do |pipeline|
-            pipeline.scard("BID-#{bid}-failed")
-            pipeline.hincrby("BID-#{bid}", "pending", -1)
-            pipeline.hincrby("BID-#{bid}", "children", 0)
-            pipeline.scard("BID-#{bid}-complete")
-            pipeline.scard("BID-#{bid}-success")
-            pipeline.hget("BID-#{bid}", "total")
-            pipeline.hget("BID-#{bid}", "parent_bid")
+        batch = Batch.new(bid)
 
-            pipeline.srem("BID-#{bid}-failed", jid)
-            pipeline.srem("BID-#{bid}-jids", jid)
-            pipeline.expire("BID-#{bid}", BID_EXPIRE_TTL)
-          end
-        end
+        batch.jobs.complete!(jid)
 
-        all_success = pending.to_i.zero? && children == success
         # if complete or successfull call complete callback (the complete callback may then call successful)
-        if (pending.to_i == failed.to_i && children == complete) || all_success
+        if batch.completed?
           enqueue_callbacks(:complete, bid)
-          enqueue_callbacks(:success, bid) if all_success
+          enqueue_callbacks(:success, bid) if batch.successfull?
         end
       end
 
@@ -282,11 +284,6 @@ module Sidekiq
             "BID-#{bid}",
             "BID-#{bid}-callbacks-complete",
             "BID-#{bid}-callbacks-success",
-            "BID-#{bid}-failed",
-
-            "BID-#{bid}-success",
-            "BID-#{bid}-complete",
-            "BID-#{bid}-jids",
           )
         end
       end

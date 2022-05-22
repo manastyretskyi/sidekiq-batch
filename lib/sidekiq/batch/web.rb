@@ -23,6 +23,36 @@ module Sidekiq
 
           erb Helpers.unique_template(:batches)
         end
+
+        app.post "/batches" do
+          case
+          when !!params['delete']
+            @batches = Set.all
+            @batches = @batches.map(&Batch.method(:new))
+            @batches.map(&:cleanup!)
+          else
+          end
+
+          redirect "#{root_path}batches"
+        end
+
+        app.get "/batches/:id" do
+          @batch = Batch.new(route_params[:id])
+          @status = Batch::Status.new(@batch.bid)
+
+          erb Helpers.unique_template(:batch)
+        end
+
+        app.post "/batches/:id" do
+          @batch = Batch.new(route_params[:id])
+          case
+          when !!params['delete']
+            @batch.remove
+          else
+          end
+
+          redirect "#{root_path}batches"
+        end
       end
     end
   end

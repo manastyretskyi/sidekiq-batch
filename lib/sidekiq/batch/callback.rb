@@ -29,30 +29,18 @@ module Sidekiq
           batch_status = Status.new bid
           send(event, bid, batch_status, batch_status.parent_bid)
 
-
           # Different events are run in different callback batches
-          Sidekiq::Batch.cleanup_redis callback_bid if callback_batch
-          Sidekiq::Batch.cleanup_redis bid if event == :success
+          Batch.new(callback_bid).cleanup! if callback_batch
+          Batch.new(bid).cleanup! if event == :success
         end
 
         def success(bid, status, parent_bid)
           return unless parent_bid
+          batch = Batch.new parent_bid
 
-          _, _, success, _, complete, pending, children, failure = Sidekiq.redis do |r|
-            r.multi do |pipeline|
-              pipeline.sadd("BID-#{parent_bid}-success", bid)
-              pipeline.expire("BID-#{parent_bid}-success", Sidekiq::Batch::BID_EXPIRE_TTL)
-              pipeline.scard("BID-#{parent_bid}-success")
-              pipeline.sadd("BID-#{parent_bid}-complete", bid)
-              pipeline.scard("BID-#{parent_bid}-complete")
-              pipeline.hincrby("BID-#{parent_bid}", "pending", 0)
-              pipeline.hincrby("BID-#{parent_bid}", "children", 0)
-              pipeline.scard("BID-#{parent_bid}-failed")
-            end
-          end
           # if job finished successfully and parent batch completed call parent complete callback
           # Success callback is called after complete callback
-          if complete == children && pending == failure
+          if batch.successfull?
             Sidekiq.logger.debug {"Finalize parent complete bid: #{parent_bid}"}
             Batch.enqueue_callbacks(:complete, parent_bid)
           end
@@ -60,16 +48,18 @@ module Sidekiq
         end
 
         def complete(bid, status, parent_bid)
-          pending, children, success = Sidekiq.redis do |r|
+          children, success = Sidekiq.redis do |r|
             r.multi do |pipeline|
-              pipeline.hincrby("BID-#{bid}", "pending", 0)
               pipeline.hincrby("BID-#{bid}", "children", 0)
               pipeline.scard("BID-#{bid}-success")
             end
           end
 
+          batch = Batch.new bid
+          pending = batch.jobs.count
+
           # if we batch was successful run success callback
-          if pending.to_i.zero? && children == success
+          if batch.successfull?
             Batch.enqueue_callbacks(:success, bid)
 
           elsif parent_bid
@@ -79,16 +69,9 @@ module Sidekiq
             # callback may add more jobs to the parent batch
 
             Sidekiq.logger.debug {"Finalize parent complete bid: #{parent_bid}"}
-            _, complete, pending, children, failure = Sidekiq.redis do |r|
-              r.multi do |pipeline|
-                pipeline.sadd("BID-#{parent_bid}-complete", bid)
-                pipeline.scard("BID-#{parent_bid}-complete")
-                pipeline.hincrby("BID-#{parent_bid}", "pending", 0)
-                pipeline.hincrby("BID-#{parent_bid}", "children", 0)
-                pipeline.scard("BID-#{parent_bid}-failed")
-              end
-            end
-            if complete == children && pending == failure
+            batch = Batch.new parent_bid
+  
+            if batch.completed?
               Batch.enqueue_callbacks(:complete, parent_bid)
             end
           end

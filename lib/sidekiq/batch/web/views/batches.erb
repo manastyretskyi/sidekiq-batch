@@ -2,11 +2,19 @@
   <div class="col-sm-6">
     <h3><%= t('Batches') %></h3>
   </div>
-  <% if @batches.size > 0 && @total_size > @count %>
-    <div class="col-sm-6">
-      <%= erb :_paging, locals: { url: "#{root_path}batches" } %>
-    </div>
-  <% end %>
+
+  <div class="col-sm-6" style="display: flex; justify-content: flex-end; align-items: center;">
+    <form action="<%= root_path %>batches" method="post">
+      <%= csrf_tag %>
+      <input class="btn btn-danger" type="submit" name="delete" title="This will delete all jobs within the queue, it will reappear if you push more jobs to it in the future." value="<%= t('Delete All') %>" data-confirm="<%= t('AreYouSureDeleteBatch') %>" />
+    </form>
+
+   <% if @batches.size > 0 && @total_size > @count %>
+      <div style="margin-left: 12px">
+        <%= erb :_paging, locals: { url: "#{root_path}batches" } %>
+      </div>
+    <% end %>
+  </div>
 </header>
 
 <div class="table_container">
@@ -17,10 +25,10 @@
         <th><%= t('description') %></th>
         <th><%= t('created_at') %></th>
         <th><%= t('is_completed') %></th>
-        <th><%= t('jobs') %></th>
+        <th><%= t('pending_jobs') %></th>
+        <th></th>
       </thead>
       <% @batches.each do |batch| %>
-        <% status = Batch::Status.new(batch.bid) %>
         <tr>
           <td>
             <a href="<%= root_path %>batches/<%= batch.bid %>"><%= h batch.bid %></a>
@@ -32,10 +40,16 @@
             <%= Time.at batch.created_at %>
           </td>
           <td>
-            <%= status.complete? %>
+            <%= batch.completed? %>
           </td>
           <td>
             <%= batch.jobs.count %>
+          </td>
+          <td>
+            <form action="<%= root_path %>batches/<%= batch.bid %>" method="post">
+              <%= csrf_tag %>
+              <input class="btn btn-danger" type="submit" name="delete" title="This will delete all jobs within the queue, it will reappear if you push more jobs to it in the future." value="<%= t('Delete') %>" data-confirm="<%= t('AreYouSureDeleteBatch') %>" />
+            </form>
           </td>
         </tr>
       <% end %>

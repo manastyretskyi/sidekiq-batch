@@ -23,9 +23,10 @@
       <thead>
         <th><%= t('bid') %></th>
         <th><%= t('description') %></th>
-        <th><%= t('created_at') %></th>
+        <th><%= t('created') %></th>
         <th><%= t('is_completed') %></th>
         <th><%= t('pending_jobs') %></th>
+        <th><%= t('failed_jobs') %></th>
         <th></th>
       </thead>
       <% @batches.each do |batch| %>
@@ -37,13 +38,16 @@
             <%= batch.description %>
           </td>
           <td>
-            <%= Time.at batch.created_at %>
+            <%= relative_time Time.at(batch.created_at) %>
           </td>
           <td>
             <%= batch.completed? %>
           </td>
           <td>
-            <%= batch.jobs.count %>
+            <%= batch.jobs.pending.count %>
+          </td>
+          <td>
+            <%= batch.jobs.failed.count %>
           </td>
           <td>
             <form action="<%= root_path %>batches/<%= batch.bid %>" method="post">

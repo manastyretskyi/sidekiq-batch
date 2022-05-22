@@ -47,7 +47,7 @@ module Sidekiq
           @batch = Batch.new(route_params[:id])
           case
           when !!params['delete']
-            @batch.remove
+            @batch.cleanup!
           else
           end
 

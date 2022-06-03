@@ -202,7 +202,7 @@ module Sidekiq
         batch = Batch.new bid
         batch.jobs.fail!(jid)
 
-        enqueue_callbacks(:complete, bid) if completed?
+        enqueue_callbacks(:complete, bid) if batch.completed?
       end
 
       def process_successful_job(bid, jid)

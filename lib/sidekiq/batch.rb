@@ -224,7 +224,7 @@ module Sidekiq
         already_processed, _, callbacks, queue, parent_bid, callback_batch = Sidekiq.redis do |r|
           r.multi do |pipeline|
             pipeline.hget(batch_key, event_name)
-            pipeline.hset(batch_key, event_name, true)
+            pipeline.hset(batch_key, event_name, 'true')
             pipeline.smembers(callback_key)
             pipeline.hget(batch_key, "callback_queue")
             pipeline.hget(batch_key, "parent_bid")
@@ -244,7 +244,7 @@ module Sidekiq
         opts = {"bid" => bid, "event" => event_name}
 
         # Run callback batch finalize synchronously
-        if callback_batch
+        if callback_batch == 'true'
           # Extract opts from cb_args or use current
           # Pass in stored event as callback finalize is processed on complete event
           cb_opts = callback_args.first&.at(2) || opts
@@ -268,7 +268,7 @@ module Sidekiq
         else
           # Otherwise finalize in sub batch complete callback
           cb_batch = self.new
-          cb_batch.callback_batch = true
+          cb_batch.callback_batch = 'true'
           Sidekiq.logger.debug {"Adding callback batch: #{cb_batch.bid} for batch: #{bid}"}
           cb_batch.on(:complete, "Sidekiq::Batch::Callback::Finalize#dispatch", opts)
           cb_batch.jobs do

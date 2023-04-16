@@ -2,16 +2,23 @@ require "redis/prescription"
 
 module Sidekiq
   class Batch
-    module Set
-      module_function
-
-      SCRIPT = Redis::Prescription.read "#{__dir__}/scripts/set.lua"
-      private_constant :SCRIPT
+    class Set
+      def initialize
+        @script = File.read("#{__dir__}/scripts/set.lua")
+        @lua_script_sha = nil
+      end
 
       def all
-        Sidekiq.redis do |redis|
-          SCRIPT.eval(redis)
+        Sidekiq.redis do |conn|
+          set_script_sha(conn)
+          conn.call("EVALSHA", @lua_script_sha, 0)
         end
+      end
+
+      private
+
+      def set_script_sha(conn)
+        @lua_script_sha ||= conn.script(:load, @script)
       end
     end
   end

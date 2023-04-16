@@ -14,7 +14,7 @@ module Sidekiq
         end
 
         app.get "/batches" do
-          @batches = Set.all
+          @batches = Set.new.all
           @total_size = @batches.size
           @count = (params["count"] || 25).to_i
           @current_page = params["page"].to_i == 0 ? 1 : params["page"].to_i
@@ -27,7 +27,7 @@ module Sidekiq
         app.post "/batches" do
           case
           when !!params['delete']
-            @batches = Set.all
+            @batches = Set.new.all
             @batches = @batches.map(&Batch.method(:new))
             @batches.map(&:cleanup!)
           else
